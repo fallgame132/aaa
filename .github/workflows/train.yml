@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       max_iters:
-        description: "Количество шагов обучения"
+        description: "Шагов обучения (полное)"
         required: false
         default: "3000"
       temperature:
@@ -23,16 +23,16 @@ on:
         default: "0.8"
 
 jobs:
-  train:
-    name: Обучение модели
+  # ─── Быстрый smoke-test при каждом пуше (~30 сек) ───────────────────────────
+  smoke:
+    name: Smoke test (300 шагов)
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Настройка Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
@@ -40,21 +40,40 @@ jobs:
       - name: Установка зависимостей
         run: pip install -r requirements.txt
 
-      - name: Переопределение гиперпараметров (если заданы вручную)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Быстрое обучение (300 шагов)
+        run: python train.py --max-iters 300 --batch-size 16
+
+      - name: Тест генерации
+        run: python generate.py --prompt "Однажды" --tokens 100 --temperature 0.8
+
+  # ─── Полное обучение только по ручному запуску ───────────────────────────────
+  train-full:
+    name: Полное обучение (${{ github.event.inputs.max_iters }} шагов)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Установка зависимостей
+        run: pip install -r requirements.txt
+
+      - name: Полное обучение
         run: |
-          sed -i "s/max_iters: int = .*/max_iters: int = ${{ github.event.inputs.max_iters }}/" config.py
-          sed -i "s/temperature: float = .*/temperature: float = ${{ github.event.inputs.temperature }}/" config.py
+          python train.py \
+            --max-iters ${{ github.event.inputs.max_iters }}
 
-      - name: Обучение модели
-        run: python train.py
-
-      - name: Тест генерации текста
+      - name: Тест генерации
         run: |
           python generate.py \
             --prompt "Однажды" \
             --tokens 200 \
-            --temperature 0.8
+            --temperature ${{ github.event.inputs.temperature }}
 
       - name: Загрузка чекпоинта как артефакт
         uses: actions/upload-artifact@v4
@@ -63,23 +82,16 @@ jobs:
           path: checkpoint.pt
           retention-days: 30
 
-      - name: Вывод информации о модели
+      - name: Информация о модели
         run: |
           python - <<'EOF'
           import torch
           ckpt = torch.load("checkpoint.pt", map_location="cpu", weights_only=False)
           cfg = ckpt["cfg"]
-          vocab_size = len(ckpt["stoi"])
-          params = sum(
-              p.numel()
-              for name, p in [
-                  ("tok_emb", torch.zeros(cfg.vocab_size, cfg.n_embd)),
-              ]
-          )
-          print(f"vocab_size  : {vocab_size}")
-          print(f"n_embd      : {cfg.n_embd}")
-          print(f"n_head      : {cfg.n_head}")
-          print(f"n_layer     : {cfg.n_layer}")
-          print(f"block_size  : {cfg.block_size}")
-          print(f"max_iters   : {cfg.max_iters}")
+          print(f"vocab_size : {len(ckpt['stoi'])}")
+          print(f"n_embd     : {cfg.n_embd}")
+          print(f"n_head     : {cfg.n_head}")
+          print(f"n_layer    : {cfg.n_layer}")
+          print(f"block_size : {cfg.block_size}")
+          print(f"max_iters  : {cfg.max_iters}")
           EOF

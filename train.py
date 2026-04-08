@@ -1,3 +1,4 @@
+import argparse
 import torch
 from config import Config
 from data import CharDataset
@@ -18,8 +19,13 @@ def estimate_loss(model: TinyGPT, dataset: CharDataset, cfg: Config, device: str
     return losses
 
 
-def train():
+def train(max_iters: int | None = None, batch_size: int | None = None):
     cfg = Config()
+    if max_iters is not None:
+        cfg.max_iters = max_iters
+        cfg.eval_interval = max(1, max_iters // 5)
+    if batch_size is not None:
+        cfg.batch_size = batch_size
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Устройство: {device}")
 
@@ -68,4 +74,8 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--max-iters", type=int, default=None, help="Переопределить число шагов обучения")
+    parser.add_argument("--batch-size", type=int, default=None, help="Переопределить размер батча")
+    args = parser.parse_args()
+    train(max_iters=args.max_iters, batch_size=args.batch_size)
