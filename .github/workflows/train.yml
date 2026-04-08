@@ -1,0 +1,85 @@
+name: Train Tiny GPT
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - claude/create-mini-ai-G7Qms
+    paths:
+      - "**.py"
+      - "sample_text.txt"
+      - "requirements.txt"
+      - ".github/workflows/train.yml"
+  workflow_dispatch:
+    inputs:
+      max_iters:
+        description: "Количество шагов обучения"
+        required: false
+        default: "3000"
+      temperature:
+        description: "Температура генерации"
+        required: false
+        default: "0.8"
+
+jobs:
+  train:
+    name: Обучение модели
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Настройка Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Установка зависимостей
+        run: pip install -r requirements.txt
+
+      - name: Переопределение гиперпараметров (если заданы вручную)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          sed -i "s/max_iters: int = .*/max_iters: int = ${{ github.event.inputs.max_iters }}/" config.py
+          sed -i "s/temperature: float = .*/temperature: float = ${{ github.event.inputs.temperature }}/" config.py
+
+      - name: Обучение модели
+        run: python train.py
+
+      - name: Тест генерации текста
+        run: |
+          python generate.py \
+            --prompt "Однажды" \
+            --tokens 200 \
+            --temperature 0.8
+
+      - name: Загрузка чекпоинта как артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: tiny-gpt-checkpoint-${{ github.run_number }}
+          path: checkpoint.pt
+          retention-days: 30
+
+      - name: Вывод информации о модели
+        run: |
+          python - <<'EOF'
+          import torch
+          ckpt = torch.load("checkpoint.pt", map_location="cpu", weights_only=False)
+          cfg = ckpt["cfg"]
+          vocab_size = len(ckpt["stoi"])
+          params = sum(
+              p.numel()
+              for name, p in [
+                  ("tok_emb", torch.zeros(cfg.vocab_size, cfg.n_embd)),
+              ]
+          )
+          print(f"vocab_size  : {vocab_size}")
+          print(f"n_embd      : {cfg.n_embd}")
+          print(f"n_head      : {cfg.n_head}")
+          print(f"n_layer     : {cfg.n_layer}")
+          print(f"block_size  : {cfg.block_size}")
+          print(f"max_iters   : {cfg.max_iters}")
+          EOF
